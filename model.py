@@ -45,7 +45,9 @@ def make_tgt_mask(tgt: torch.Tensor, pad_idx: int = 1) -> torch.Tensor:
         torch.ones(tgt_len, tgt_len, device=tgt.device, dtype=torch.bool),
         diagonal=1,
     )
-    return pad_mask | causal_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
+    return pad_mask | causal_mask.unsqueeze(0).unsqueeze(0).expand(
+        batch_size, -1, -1, -1
+    )
 
 
 class MultiHeadAttention(nn.Module):
@@ -115,7 +117,8 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
-            torch.arange(0, d_model, 2, dtype=torch.float) * (-math.log(10000.0) / d_model)
+            torch.arange(0, d_model, 2, dtype=torch.float)
+            * (-math.log(10000.0) / d_model)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
@@ -165,7 +168,9 @@ class EncoderLayer(nn.Module):
         use_scaling: bool = True,
     ) -> None:
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
+        self.self_attn = MultiHeadAttention(
+            d_model, num_heads, dropout, use_scaling=use_scaling
+        )
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
@@ -189,8 +194,12 @@ class DecoderLayer(nn.Module):
         use_scaling: bool = True,
     ) -> None:
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
-        self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout, use_scaling=use_scaling)
+        self.self_attn = MultiHeadAttention(
+            d_model, num_heads, dropout, use_scaling=use_scaling
+        )
+        self.cross_attn = MultiHeadAttention(
+            d_model, num_heads, dropout, use_scaling=use_scaling
+        )
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.dropout = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
@@ -288,9 +297,17 @@ class Transformer(nn.Module):
 
         self.src_embed = nn.Embedding(src_vocab_size, d_model, padding_idx=pad_idx)
         self.tgt_embed = nn.Embedding(tgt_vocab_size, d_model, padding_idx=pad_idx)
-        pos_cls = LearnedPositionalEncoding if use_learned_positional_encoding else PositionalEncoding
-        self.src_positional_encoding = pos_cls(d_model, dropout=dropout, max_len=max_len)
-        self.tgt_positional_encoding = pos_cls(d_model, dropout=dropout, max_len=max_len)
+        pos_cls = (
+            LearnedPositionalEncoding
+            if use_learned_positional_encoding
+            else PositionalEncoding
+        )
+        self.src_positional_encoding = pos_cls(
+            d_model, dropout=dropout, max_len=max_len
+        )
+        self.tgt_positional_encoding = pos_cls(
+            d_model, dropout=dropout, max_len=max_len
+        )
 
         encoder_layer = EncoderLayer(
             d_model=d_model,
@@ -316,7 +333,11 @@ class Transformer(nn.Module):
         if checkpoint_path is not None:
             import gdown
 
-            gdown.download(id="<REPLACE_GDRIVE_ID>", output=checkpoint_path, quiet=False)
+            gdown.download(
+                id="1bb6TTk1Bgl2Rf9IfmpnH8RTxqABIpYF5",
+                output=checkpoint_path,
+                quiet=False,
+            )
             if os.path.exists(checkpoint_path):
                 state = torch.load(checkpoint_path, map_location="cpu")
                 if "model_state_dict" in state:
@@ -356,18 +377,29 @@ class Transformer(nn.Module):
         return self.decode(memory, src_mask, tgt, tgt_mask)
 
     def infer(self, src_sentence: str) -> str:
-        if self.src_tokenizer is None or not self.src_stoi or not self.tgt_itos or not self.tgt_stoi:
-            raise ValueError("Tokenizer and vocab metadata must be attached for inference.")
+        if (
+            self.src_tokenizer is None
+            or not self.src_stoi
+            or not self.tgt_itos
+            or not self.tgt_stoi
+        ):
+            raise ValueError(
+                "Tokenizer and vocab metadata must be attached for inference."
+            )
 
         from train import greedy_decode
 
         device = next(self.parameters()).device
         if hasattr(self.src_tokenizer, "tokenizer"):
-            tokens = [tok.text.lower() for tok in self.src_tokenizer.tokenizer(src_sentence)]
+            tokens = [
+                tok.text.lower() for tok in self.src_tokenizer.tokenizer(src_sentence)
+            ]
         else:
             tokens = [tok.text.lower() for tok in self.src_tokenizer(src_sentence)]
         tokens = ["<sos>"] + tokens[: self.max_len - 2] + ["<eos>"]
-        src_ids = [self.src_stoi.get(token, self.src_stoi.get("<unk>", 0)) for token in tokens]
+        src_ids = [
+            self.src_stoi.get(token, self.src_stoi.get("<unk>", 0)) for token in tokens
+        ]
 
         src_tensor = torch.tensor(src_ids, dtype=torch.long, device=device).unsqueeze(0)
         src_mask = make_src_mask(src_tensor, pad_idx=self.pad_idx)
