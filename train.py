@@ -41,6 +41,29 @@ class LabelSmoothingLoss(nn.Module):
         return token_loss.mean() * 0.0
 
 
+def _detokenize_text(text: str) -> str:
+    replacements = {
+        " .": ".",
+        " ,": ",",
+        " !": "!",
+        " ?": "?",
+        " :": ":",
+        " ;": ";",
+        " n't": "n't",
+        " 's": "'s",
+        " 're": "'re",
+        " 've": "'ve",
+        " 'm": "'m",
+        " 'll": "'ll",
+        " 'd": "'d",
+        "( ": "(",
+        " )": ")",
+    }
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+    return text.strip()
+
+
 def run_epoch(
     data_iter,
     model: Transformer,
@@ -156,7 +179,7 @@ def _ids_to_sentence(token_ids, vocab) -> str:
         if token in specials:
             continue
         tokens.append(token)
-    return " ".join(tokens).strip()
+    return _detokenize_text(" ".join(tokens))
 
 
 def evaluate_bleu(
@@ -191,7 +214,7 @@ def evaluate_bleu(
                 predictions.append(_ids_to_sentence(pred_ids.tolist(), tgt_vocab))
                 references.append([_ids_to_sentence(tgt.tolist(), tgt_vocab)])
 
-    result = metric.compute(predictions=predictions, references=references)
+    result = metric.compute(predictions=predictions, references=references, force=True)
     return float(result["score"])
 
 
@@ -207,6 +230,12 @@ def save_checkpoint(
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
         "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+        "vocab_metadata": {
+            "src_stoi": getattr(model, "src_stoi", {}),
+            "tgt_stoi": getattr(model, "tgt_stoi", {}),
+            "src_itos": getattr(model, "src_itos", {}),
+            "tgt_itos": getattr(model, "tgt_itos", {}),
+        },
         "model_config": {
             "src_vocab_size": model.src_vocab_size,
             "tgt_vocab_size": model.tgt_vocab_size,
@@ -232,6 +261,11 @@ def load_checkpoint(
 ) -> int:
     checkpoint = torch.load(path, map_location="cpu")
     model.load_state_dict(checkpoint["model_state_dict"])
+    vocab_metadata = checkpoint.get("vocab_metadata", {})
+    model.src_stoi = vocab_metadata.get("src_stoi", getattr(model, "src_stoi", {}))
+    model.tgt_stoi = vocab_metadata.get("tgt_stoi", getattr(model, "tgt_stoi", {}))
+    model.src_itos = vocab_metadata.get("src_itos", getattr(model, "src_itos", {}))
+    model.tgt_itos = vocab_metadata.get("tgt_itos", getattr(model, "tgt_itos", {}))
     if optimizer is not None and checkpoint.get("optimizer_state_dict") is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     if scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
@@ -280,8 +314,9 @@ def _run_single_experiment(
         config["num_epochs"] = num_epochs
     run_id_base = os.environ.get("WANDB_RUN_ID", "da6401-a3-run")
     run_id = run_id_base if resume_main_run else f"{run_id_base}-{_sanitize_run_name(run_name)}"
+    wandb_project = os.environ.get("WANDB_PROJECT", "da6401-a3-submission")
     wandb.init(
-        project="da6401-a3",
+        project=wandb_project,
         id=run_id,
         resume="allow",
         name=run_name,
@@ -335,12 +370,11 @@ def _run_single_experiment(
     safe_name = _sanitize_run_name(run_name)
     checkpoint_pattern = f"checkpoint_{safe_name}_epoch_*.pt"
     start_epoch = 0
-    if resume_main_run:
-        checkpoints = sorted(glob.glob(checkpoint_pattern))
-        if checkpoints:
-            latest = checkpoints[-1]
-            start_epoch = load_checkpoint(latest, model, optimizer, scheduler) + 1
-            print(f"Resumed from {latest}, starting at epoch {start_epoch + 1}")
+    checkpoints = sorted(glob.glob(checkpoint_pattern))
+    if checkpoints:
+        latest = checkpoints[-1]
+        start_epoch = load_checkpoint(latest, model, optimizer, scheduler) + 1
+        print(f"Resumed from {latest}, starting at epoch {start_epoch + 1}")
 
     best_bleu = -1.0
     best_path = f"best_model_{safe_name}.pt"
@@ -392,12 +426,12 @@ def _run_single_experiment(
         if val_bleu > best_bleu:
             best_bleu = val_bleu
             save_checkpoint(model, optimizer, scheduler, epoch, best_path)
-            _maybe_upload_to_drive(best_path)
             if save_primary_best:
                 save_checkpoint(model, optimizer, scheduler, epoch, "best_model.pt")
-                _maybe_upload_to_drive("best_model.pt")
 
     load_checkpoint(best_path, model)
+    if save_primary_best and os.path.exists("best_model.pt"):
+        _maybe_upload_to_drive("best_model.pt")
     test_bleu = evaluate_bleu(
         model,
         test_loader,

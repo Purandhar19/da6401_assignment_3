@@ -82,7 +82,6 @@ class Multi30kDataset(Dataset):
         self.dataset = load_dataset(
             "bentrevett/multi30k",
             split=split,
-            trust_remote_code=True,
         )
 
         self.src_vocab = src_vocab
